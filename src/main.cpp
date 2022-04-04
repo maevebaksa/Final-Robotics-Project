@@ -20,6 +20,8 @@ int ledpinfront = 3;
 int ledpinright = 2;
 int ledpinleft = 4;
 
+int diagpin = 5;
+
 
 //***** HARDWARE DRIVE TRAIN CALIBRATION ***
 //set this to 1 in order to enable the motors to just be at 1500 1500 to tune their 0 points, do this first before
@@ -48,8 +50,9 @@ int calibrationenabled = 0;
 //    direction the robot is veering in changing. Once that happens, you can slowly tweak the value back in the other 
 //    direction to get the precise value.
 //(6) enjoy!
-int right = 1590;
-int left = 1300;
+int rightdefault = 1590;
+int leftdefault = 1300;
+
 
 
 //***** SOFTWARE SENSOR CALIBRATION ****
@@ -69,8 +72,68 @@ int frontthreshold = 35;
 int rightthreshold = 35;
 int leftthreshold = 35;
 
+//for reporting which pins are tripped
+int righttripped = 0;
+int fronttripped = 0;
+int lefttripped = 0;
+
+int failiure = 0;
+
+//right and left default are in charge of making sure that the robot drives straight, this is for compensation and can
+//be thought of as "actual"
+int right = rightdefault;
+int left = leftdefault;
 
 
+//leave at defuault
+int rightadjustmentamount = 30;
+int leftadjustmentamount = 30;
+
+
+//is called by the logic later in the program
+//Reset = make robot go straight using default values
+//Rotate = make robot rotate
+//Stop = make robot stop
+//Adjright/left = see individual notes, but increase power to corresponding motor
+//in order to straigten the path
+void writeServoValue(bool reset, bool rotate, bool stop, bool adjright, bool adjleft){
+
+  if (reset == true){
+      right = rightdefault;
+      left = leftdefault;
+
+  }
+
+  if (adjright == true){
+    //we want to increase the power to the right wheel slightly, which would
+    //mean making it turn more CLOCKWISE, or making the right value LARGER
+    right = right + rightadjustmentamount;
+  }
+
+  if (adjleft == true){
+    //we want to increase the power to the left wheel slightly, which would
+    //mean making it turn more COUNTERCLOCKWISE, or making the left value
+    //SMALLER
+    left = left - leftadjustmentamount;
+  }
+
+  if (rotate == true){
+    leftservo.writeMicroseconds(right);
+    rightservo.writeMicroseconds(right);
+  }
+
+  if (stop == true){
+    leftservo.writeMicroseconds(1500);
+    rightservo.writeMicroseconds(1500);    
+  }
+
+  else{
+    leftservo.writeMicroseconds(left);
+    rightservo.writeMicroseconds(right);
+  }
+
+  
+}
 
 
 void setup() {
@@ -85,8 +148,7 @@ void setup() {
   pinMode(ledpinfront, OUTPUT);
   pinMode(ledpinleft,OUTPUT);
   pinMode(ledpinright, OUTPUT);
-
-  
+  pinMode(diagpin, OUTPUT);
 }
 
 void loop() {
@@ -100,8 +162,8 @@ void loop() {
     int lefthold = analogRead (sensorpinleft);
     int fronthold = analogRead(sensorpinfront);
 
-    //start with the right pin
-    Serial.println("Right:")
+    //start with the right pin, print then pin, set the LED
+    Serial.println("Right:");
     Serial.println(righthold);
     
     if (righthold < rightthreshold){
@@ -111,8 +173,35 @@ void loop() {
       digitalWrite(ledpinright, LOW);
     }
 
+    //left
+    Serial.println("Left:");
+    Serial.println(lefthold);
 
+    if (lefthold < leftthreshold){
+      digitalWrite(ledpinleft, HIGH);
+    }
+    else{
+      digitalWrite(ledpinleft, LOW);
+    }
 
+    //front
+    Serial.println("Front:");
+    Serial.println(fronthold);
+
+    if (fronthold > frontthreshold){
+      digitalWrite(ledpinfront, HIGH);
+    }
+    else{
+      digitalWrite(ledpinfront, LOW);
+    }
+
+    //diag pin for failiure.
+    if (fronthold == 0 || lefthold == 0 || righthold == 0){
+      digitalWrite(diagpin, HIGH);
+    }
+    else{
+      digitalWrite(diagpin, LOW);
+    }
   }
 
   //motor calibration code
@@ -132,7 +221,91 @@ void loop() {
     int lefthold = analogRead (sensorpinleft);
     int fronthold = analogRead(sensorpinfront);
 
+    //check if any of the pins are in a tripped position and change the corresponding value
 
+    //right
+    if (righthold < rightthreshold){
+      digitalWrite(ledpinright, HIGH);
+      righttripped = 1;
+    }
+    else{
+      digitalWrite(ledpinright, LOW);
+      righttripped = 0;
+    }
+
+    //left
+
+    if (lefthold < leftthreshold){
+      digitalWrite(ledpinleft, HIGH);
+      lefttripped = 1;
+    }
+    else{
+      digitalWrite(ledpinleft, LOW);
+      lefttripped = 0;
+    }
+
+    //front
+
+    if (fronthold > frontthreshold){
+      digitalWrite(ledpinfront, HIGH);
+      fronttripped = 1;
+    }
+    else{
+      digitalWrite(ledpinfront, LOW);
+      fronttripped = 0;
+    }
+
+    //diag pin for failiure.
+    if (fronthold == 0 || lefthold == 0 || righthold == 0){
+      digitalWrite(diagpin, HIGH);
+      failiure = 1;
+    }
+    else{
+      digitalWrite(diagpin, LOW);
+      failiure = 0;
+    }
+
+  //THE IMPORTANT STUFF
+
+  // using our new values for tripped and not tripped, we can figure out what state the robot is in
+
+  //robot encounters a (only the front sensor is tripped, this is the most complex case)
+  if (fronttripped == 1 && lefttripped == 0 && righttripped == 0 && failiure == 0){
+    //rotate until it finds the line again (in this case, to the right)
+    while (fronttripped == 0){
+      writeServoValue(false,true,false,false,false);
+    }
+    //once the line is found again, have it go straight by resetting
+    writeServoValue(true,false,false,false,false);
   }
 
+  //robot is veering left (right sensor is tripped)
+  else if (lefttripped == 0 && righttripped == 1 && failiure == 0){
+    //make these values a reality without resetting them also, adjust left
+    writeServoValue(false,false,false,false,true);
+  }
+
+  //robot is veering right (left sensor is tripped)
+  else if (righttripped == 1 && lefttripped == 1 && failiure == 0){
+    //make these values a reality without resetting them also, adjust right
+    writeServoValue(false,false,false,true,false);
+  }
+
+  //robot is okay, drive straight
+  else if (fronttripped == 0 && lefttripped == 0 && righttripped == 0 && failiure == 0){
+    //reset left and right values to drive straight 
+    writeServoValue(true,false,false,false,false);
+  }
+
+  //failiure occurs, or robot has all sensors tripped, which makes no sense
+  else{
+    //stop the robot
+    writeServoValue(false,false,true,false,false);
+  }
+
+  //only check every 0.1 seconds, I feel like more than that is excessive
+  delay(100);
+
+  }
+  
 }
